@@ -1,0 +1,14 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+yt-dlp>=2025.1.0
+pywebview>=5.3
+qrcode>=8.0
+wsgidav>=4.3.3
+a2wsgi>=1.10.0
+python-multipart>=0.0.12
+mutagen>=1.47.0
+google-api-python-client>=2.160.0
+google-auth-oauthlib>=1.2.1
+google-auth>=2.38.0
+pymobiledevice3>=4.0.0
+pywin32>=306; sys_platform == "win32"

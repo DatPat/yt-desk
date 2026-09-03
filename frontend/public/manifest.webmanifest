@@ -1,0 +1,18 @@
+{
+  "name": "YT Desk",
+  "short_name": "YT Desk",
+  "description": "Watch and sync downloaded playlists from your PC",
+  "start_url": "/m",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0c0b0a",
+  "theme_color": "#0c0b0a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
