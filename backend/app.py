@@ -517,6 +517,47 @@ def create_app() -> FastAPI:
 
         return android_usb.cancel()
 
+    @application.get("/api/android/orphans")
+    def android_orphans() -> dict[str, Any]:
+        from . import android_usb
+
+        return android_usb.orphan_snapshot()
+
+    @application.post("/api/android/orphans/scan")
+    async def android_orphans_scan(request: Request) -> dict[str, Any]:
+        from . import android_usb
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        try:
+            return android_usb.start_orphan_scan(body.get("id"), body.get("kind"))
+        except Exception as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.post("/api/android/orphans/delete")
+    async def android_orphans_delete(request: Request) -> dict[str, Any]:
+        from . import android_usb
+
+        body = await request.json()
+        try:
+            return android_usb.start_orphan_delete(
+                body.get("paths") or body.get("files") or [],
+                body.get("id"),
+                body.get("kind"),
+            )
+        except Exception as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @application.post("/api/android/orphans/cancel")
+    def android_orphans_cancel() -> dict[str, Any]:
+        from . import android_usb
+
+        return android_usb.cancel_orphans()
+
     @application.get("/api/sync")
     def get_sync() -> dict[str, Any]:
         return sync_payload()

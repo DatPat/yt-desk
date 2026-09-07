@@ -15,6 +15,7 @@ import type {
   UsbStatus,
   UsbJob,
   AndroidStatus,
+  AndroidOrphans,
   ChangesReport,
 } from "./types";
 
@@ -150,6 +151,21 @@ export const api = {
       body: JSON.stringify(body),
     }).then((r) => json<UsbJob>(r)),
   androidCancel: () => fetch("/api/android/cancel", { method: "POST" }).then((r) => json<UsbJob>(r)),
+  androidOrphans: () => fetch("/api/android/orphans").then((r) => json<AndroidOrphans>(r)),
+  androidOrphansScan: (body: { id?: string; kind?: string }) =>
+    fetch("/api/android/orphans/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<AndroidOrphans>(r)),
+  androidOrphansDelete: (body: { id?: string; kind?: string; paths: string[] }) =>
+    fetch("/api/android/orphans/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<AndroidOrphans>(r)),
+  androidOrphansCancel: () =>
+    fetch("/api/android/orphans/cancel", { method: "POST" }).then((r) => json<AndroidOrphans>(r)),
 };
 
 export function mediaUrl(videoId: string, token?: string): string {

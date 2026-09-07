@@ -38,7 +38,7 @@ import {
   isUnavailable,
   qualityLabel,
 } from "./format";
-import type { AndroidStatus, ChangesReport, CompareReport, Download as Dl, DuplicateReport, Health, Playlist, Settings as AppSettings, SongGroup, Stats, SyncInfo, UsbJob, UsbStatus, Video, YoutubeJob, YoutubePreview, YoutubeStatus } from "./types";
+import type { AndroidOrphans, AndroidStatus, ChangesReport, CompareReport, Download as Dl, DuplicateReport, Health, Playlist, Settings as AppSettings, SongGroup, Stats, SyncInfo, UsbJob, UsbStatus, Video, YoutubeJob, YoutubePreview, YoutubeStatus } from "./types";
 
 type View =
   | { kind: "library" }
@@ -1606,6 +1606,145 @@ function AndroidUsbPanel() {
           {job.current && <p className="copy-current">{job.current}</p>}
           <p style={{ margin: "8px 0 0" }}>{job.message}</p>
           {job.error && <p style={{ color: "var(--danger)", margin: "6px 0 0" }}>{job.error}</p>}
+        </div>
+      )}
+      <PhoneExtras deviceId={device?.id} deviceKind={device?.kind} ready={!!device?.ready} copyRunning={running} />
+    </div>
+  );
+}
+
+function PhoneExtras({
+  deviceId,
+  deviceKind,
+  ready,
+  copyRunning,
+}: {
+  deviceId?: string;
+  deviceKind?: "adb" | "mtp";
+  ready: boolean;
+  copyRunning: boolean;
+}) {
+  const [orphans, setOrphans] = useState<AndroidOrphans | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const scanning = orphans?.status === "scanning";
+  const deleting = orphans?.status === "deleting";
+  const files = orphans?.files || [];
+
+  useEffect(() => {
+    api.androidOrphans().then(setOrphans).catch(() => undefined);
+    const es = new EventSource("/api/events");
+    es.addEventListener("android-orphans", (ev) => {
+      const data = JSON.parse((ev as MessageEvent).data) as AndroidOrphans;
+      setOrphans(data);
+      setPicked((cur) => {
+        const keep = new Set(data.files.map((f) => f.path));
+        return new Set([...cur].filter((p) => keep.has(p)));
+      });
+    });
+    return () => es.close();
+  }, []);
+
+  const toggle = (path: string) => {
+    setPicked((cur) => {
+      const next = new Set(cur);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  return (
+    <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--line)" }}>
+      <b>On the phone, not in YT Desk</b>
+      <p>
+        Scan Music for audio files whose names are not in your downloaded library (old id-prefixed copies, leftovers, other apps).
+        You can delete them from the phone. Folders like Playlists are left alone.
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+        <button
+          className="btn"
+          disabled={!ready || busy || scanning || deleting || copyRunning}
+          onClick={async () => {
+            try {
+              setBusy(true);
+              setPicked(new Set());
+              setOrphans(await api.androidOrphansScan({ id: deviceId, kind: deviceKind }));
+            } catch (e) {
+              setOrphans({
+                status: "error",
+                message: String((e as Error).message),
+                error: String((e as Error).message),
+                files: [],
+                deleted: 0,
+                failed: 0,
+                total: 0,
+                device: null,
+              });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <Search size={15} className={scanning ? "spin" : ""} /> Scan phone
+        </button>
+        {files.length > 0 && (
+          <>
+            <button className="btn btn-sm" onClick={() => setPicked(new Set(files.map((f) => f.path)))}>Select all</button>
+            <button className="btn btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
+            <button
+              className="btn btn-danger"
+              disabled={picked.size === 0 || deleting || copyRunning}
+              onClick={async () => {
+                if (!confirm(`Delete ${picked.size} file(s) from the phone? This does not delete anything on this PC.`)) return;
+                try {
+                  setBusy(true);
+                  setOrphans(await api.androidOrphansDelete({ id: deviceId, kind: deviceKind, paths: [...picked] }));
+                } catch (e) {
+                  setOrphans((cur) => ({
+                    ...(cur || {
+                      status: "error",
+                      message: "",
+                      error: null,
+                      files: [],
+                      deleted: 0,
+                      failed: 0,
+                      total: 0,
+                      device: null,
+                    }),
+                    status: "error",
+                    error: String((e as Error).message),
+                    message: String((e as Error).message),
+                  }));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Trash2 size={15} /> Delete selected ({picked.size})
+            </button>
+          </>
+        )}
+        {(scanning || deleting) && (
+          <button className="btn btn-sm" onClick={() => api.androidOrphansCancel()}>Cancel</button>
+        )}
+      </div>
+      {orphans?.message && <p style={{ margin: "10px 0 0", color: "var(--muted)" }}>{orphans.message}</p>}
+      {orphans?.error && <p style={{ color: "var(--danger)", margin: "6px 0 0" }}>{orphans.error}</p>}
+      {files.length > 0 && (
+        <div className="dl-list" style={{ marginTop: 10, maxHeight: 280, overflow: "auto" }}>
+          {files.map((f) => (
+            <label key={f.path} className="dl-queue-row" style={{ cursor: "pointer" }}>
+              <input type="checkbox" checked={picked.has(f.path)} onChange={() => toggle(f.path)} />
+              <div>
+                <b>{f.name}</b>
+                <div style={{ color: "var(--faint)", fontSize: 12 }}>
+                  {f.path}
+                  {f.size > 0 ? ` · ${formatBytes(f.size)}` : ""}
+                </div>
+              </div>
+            </label>
+          ))}
         </div>
       )}
     </div>

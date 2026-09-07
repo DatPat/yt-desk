@@ -69,6 +69,22 @@ class PlaylistM3uTests(unittest.TestCase):
         self.assertTrue(text.endswith("\n"))
 
 
+class PhoneOrphanTests(unittest.TestCase):
+    def test_extras_are_names_not_in_library(self):
+        from backend.android_usb import extra_phone_files
+
+        phone = [
+            {"path": "Apparat - Goodbye.opus", "name": "Apparat - Goodbye.opus", "size": 1},
+            {"path": "Library/old id file.opus", "name": "TJ4INx5lfe4 - Apparat - Goodbye (Official Audio).opus", "size": 1},
+            {"path": "random.mp3", "name": "random.mp3", "size": 9},
+        ]
+        extras = extra_phone_files(phone, {"Apparat - Goodbye.opus"})
+        names = {item["name"] for item in extras}
+        self.assertNotIn("Apparat - Goodbye.opus", names)
+        self.assertIn("random.mp3", names)
+        self.assertIn("TJ4INx5lfe4 - Apparat - Goodbye (Official Audio).opus", names)
+
+
 class PlaylistChangeTests(unittest.TestCase):
     def test_new_ids_are_those_missing_from_snapshot(self):
         old = {"aaa", "bbb"}

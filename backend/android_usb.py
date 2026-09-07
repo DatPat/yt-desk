@@ -17,6 +17,31 @@ from .events import hub
 
 MUSIC_NAMES = ("Music", "music", "Musica", "Música", "Musique", "Musik")
 PLAYLIST_FOLDER = "Playlists"
+MEDIA_EXTS = {
+    ".opus",
+    ".ogg",
+    ".oga",
+    ".m4a",
+    ".mp3",
+    ".flac",
+    ".wav",
+    ".aac",
+    ".mp4",
+    ".mkv",
+    ".webm",
+    ".m4b",
+}
+SKIP_DIR_NAMES = {
+    ".thumbnails",
+    "android",
+    "playlists",
+    "alarms",
+    "notifications",
+    "ringtones",
+    "podcasts",
+    "audiobooks",
+    "recordings",
+}
 STORAGE_PREFER = (
     "internal shared storage",
     "internal storage",
@@ -1129,3 +1154,336 @@ def _friendly_error(exc: BaseException) -> str:
     if "com" in lowered and "reject" in lowered:
         return "Windows is busy with the phone. Close File Explorer windows opened on the phone and retry."
     return text[:400]
+
+
+_orphan_lock = threading.Lock()
+_orphan_cancel = threading.Event()
+_orphan: dict[str, Any] = {
+    "status": "idle",
+    "message": "",
+    "error": None,
+    "files": [],
+    "deleted": 0,
+    "failed": 0,
+    "total": 0,
+    "device": None,
+}
+
+
+def orphan_snapshot() -> dict[str, Any]:
+    with _orphan_lock:
+        return json_safe(_orphan)
+
+
+def json_safe(data: dict[str, Any]) -> dict[str, Any]:
+    import json as _json
+
+    return _json.loads(_json.dumps(data, default=str))
+
+
+def _set_orphan(**fields: Any) -> dict[str, Any]:
+    with _orphan_lock:
+        _orphan.update(fields)
+        data = json_safe(_orphan)
+    hub.publish("android-orphans", data)
+    return data
+
+
+def extra_phone_files(phone_files: list[dict[str, Any]], library_names: set[str]) -> list[dict[str, Any]]:
+    library = {name.lower() for name in library_names}
+    extras = [item for item in phone_files if str(item.get("name") or "").lower() not in library]
+    extras.sort(key=lambda item: str(item.get("path") or item.get("name") or "").lower())
+    return extras
+
+
+def _library_names() -> set[str]:
+    return {path.name for path in _local_files()}
+
+
+def _require_device(device_id: str | None = None, kind: str | None = None) -> dict[str, Any]:
+    info = list_devices()
+    devices = info["devices"]
+    match = None
+    if device_id:
+        match = next((d for d in devices if d["id"] == device_id), None)
+    else:
+        ready = [d for d in devices if d.get("ready")]
+        if kind:
+            ready = [d for d in ready if d.get("kind") == kind] or ready
+        match = next((d for d in ready if d["kind"] == "adb"), None) or (ready[0] if ready else None)
+    if match is None:
+        raise RuntimeError(info.get("error") or "No Android phone on USB.")
+    if not match.get("ready"):
+        raise RuntimeError(match.get("error") or "Phone is connected but not ready.")
+    return match
+
+
+def start_orphan_scan(device_id: str | None = None, kind: str | None = None) -> dict[str, Any]:
+    if snapshot()["status"] == "running":
+        raise RuntimeError("Wait for the USB copy to finish first.")
+    if orphan_snapshot()["status"] in {"scanning", "deleting"}:
+        raise RuntimeError("Already scanning or deleting files on the phone.")
+    device = _require_device(device_id, kind)
+    _orphan_cancel.clear()
+    _set_orphan(
+        status="scanning",
+        message=f"Scanning Music on {device['name']}…",
+        error=None,
+        files=[],
+        deleted=0,
+        failed=0,
+        total=0,
+        device=device["name"],
+    )
+    threading.Thread(target=_run_orphan_scan, args=(device,), daemon=True).start()
+    return orphan_snapshot()
+
+
+def start_orphan_delete(
+    paths: list[str],
+    device_id: str | None = None,
+    kind: str | None = None,
+) -> dict[str, Any]:
+    if snapshot()["status"] == "running":
+        raise RuntimeError("Wait for the USB copy to finish first.")
+    if orphan_snapshot()["status"] in {"scanning", "deleting"}:
+        raise RuntimeError("Already scanning or deleting files on the phone.")
+    clean = [str(p).replace("\\", "/").lstrip("/") for p in paths if str(p).strip()]
+    clean = [p for p in clean if ".." not in p.split("/")]
+    if not clean:
+        raise RuntimeError("Pick at least one file to delete from the phone.")
+    device = _require_device(device_id, kind)
+    _orphan_cancel.clear()
+    _set_orphan(
+        status="deleting",
+        message=f"Deleting {len(clean)} file(s) from {device['name']}…",
+        error=None,
+        deleted=0,
+        failed=0,
+        total=len(clean),
+        device=device["name"],
+    )
+    threading.Thread(target=_run_orphan_delete, args=(device, clean), daemon=True).start()
+    return orphan_snapshot()
+
+
+def cancel_orphans() -> dict[str, Any]:
+    _orphan_cancel.set()
+    return orphan_snapshot()
+
+
+def _run_orphan_scan(device: dict[str, Any]) -> None:
+    try:
+        library = _library_names()
+        if device["kind"] == "adb":
+            phone_files = _adb_list_media(device.get("serial") or device["id"].split(":", 1)[-1])
+        else:
+            phone_files = _with_com(lambda: _mtp_list_media(device))
+        extras = extra_phone_files(phone_files, library)
+        _set_orphan(
+            status="done",
+            files=extras,
+            total=len(extras),
+            message=(
+                f"{len(extras)} file(s) on the phone are not in your YT Desk library."
+                if extras
+                else "Every music file on the phone is in your YT Desk library."
+            ),
+            error=None,
+        )
+    except Exception as exc:
+        _set_orphan(status="error", error=_friendly_error(exc), message=_friendly_error(exc))
+
+
+def _run_orphan_delete(device: dict[str, Any], paths: list[str]) -> None:
+    try:
+        deleted = failed = 0
+        failures: list[str] = []
+        if device["kind"] == "adb":
+            serial = device.get("serial") or device["id"].split(":", 1)[-1]
+            for index, rel in enumerate(paths, start=1):
+                if _orphan_cancel.is_set():
+                    break
+                _set_orphan(message=f"Deleting {index}/{len(paths)} · {rel}", current=rel)
+                if _adb_delete_rel(serial, rel):
+                    deleted += 1
+                else:
+                    failed += 1
+                    failures.append(rel)
+                _set_orphan(deleted=deleted, failed=failed)
+        else:
+            def inner() -> None:
+                nonlocal deleted, failed
+                shell_music = _mtp_open_music(device)
+                dest = shell_music[1]
+                for index, rel in enumerate(paths, start=1):
+                    if _orphan_cancel.is_set():
+                        break
+                    _set_orphan(message=f"Deleting {index}/{len(paths)} · {rel}")
+                    if _mtp_delete_rel(dest, rel):
+                        deleted += 1
+                    else:
+                        failed += 1
+                        failures.append(rel)
+                    _set_orphan(deleted=deleted, failed=failed)
+
+            _with_com(inner)
+        deleted_set = set(paths) - set(failures)
+        remaining = [
+            item
+            for item in (orphan_snapshot().get("files") or [])
+            if str(item.get("path") or "") not in deleted_set
+        ]
+        status = "done" if failed == 0 else "error"
+        msg = f"Deleted {deleted} file(s) from the phone."
+        if failed:
+            msg += f" {failed} could not be removed."
+        _set_orphan(
+            status=status,
+            files=remaining,
+            total=len(remaining),
+            deleted=deleted,
+            failed=failed,
+            message=msg,
+            error=None if failed == 0 else msg,
+        )
+    except Exception as exc:
+        _set_orphan(status="error", error=_friendly_error(exc), message=_friendly_error(exc))
+
+
+def _adb_list_media(serial: str) -> list[dict[str, Any]]:
+    proc = _run_adb(["-s", serial, "shell", "find", "/sdcard/Music", "-type", "f"], timeout=60)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "Could not list Music on the phone").strip())
+    out: list[dict[str, Any]] = []
+    for raw in (proc.stdout or "").splitlines():
+        line = raw.strip().replace("\\", "/")
+        prefix = "/sdcard/Music/"
+        if not line.startswith(prefix):
+            continue
+        rel = line[len(prefix) :]
+        parts = [p for p in rel.split("/") if p]
+        if any(part.lower() in SKIP_DIR_NAMES or part.startswith(".") for part in parts[:-1]):
+            continue
+        name = parts[-1] if parts else ""
+        if Path(name).suffix.lower() not in MEDIA_EXTS:
+            continue
+        out.append({"path": rel, "name": name, "size": -1})
+    return out
+
+
+def _adb_delete_rel(serial: str, rel: str) -> bool:
+    remote = "/sdcard/Music/" + rel.replace("\\", "/").lstrip("/")
+    quoted = "'" + remote.replace("'", "'\"'\"'") + "'"
+    proc = _run_adb(["-s", serial, "shell", f"rm -f -- {quoted}"], timeout=20)
+    return proc.returncode == 0
+
+
+def _mtp_open_music(device: dict[str, Any]):
+    shell = _shell()
+    computer = _this_pc(shell)
+    if computer is None:
+        raise RuntimeError("Could not open This PC. Plug the phone in again.")
+    phone_item = None
+    want = device.get("name") or ""
+    for item in _iter_items(computer):
+        try:
+            name = str(item.Name or "")
+            kind = str(item.Type or "")
+        except Exception:
+            continue
+        path = str(getattr(item, "Path", "") or "")
+        if want and name == want:
+            phone_item = item
+            break
+        if phone_item is None and _looks_like_android(name, kind, path):
+            phone_item = item
+    if phone_item is None:
+        raise RuntimeError("Windows does not see the phone. Unlock it and set USB to File transfer.")
+    storage_item = _pick_storage(phone_item.GetFolder)
+    if storage_item is None:
+        raise RuntimeError("Unlock the phone — storage is not visible yet.")
+    music_item = _child(storage_item.GetFolder, *MUSIC_NAMES)
+    if music_item is None:
+        raise RuntimeError("Could not open the phone’s Music folder.")
+    return shell, music_item.GetFolder
+
+
+def _mtp_list_media(device: dict[str, Any]) -> list[dict[str, Any]]:
+    _shell_unused, music = _mtp_open_music(device)
+    return _mtp_walk_media(music, "", 0)
+
+
+def _mtp_walk_media(folder, prefix: str, depth: int) -> list[dict[str, Any]]:
+    if depth > 4:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in _iter_items(folder):
+        try:
+            name = str(item.Name or "")
+        except Exception:
+            continue
+        if not name or name in {".", ".."}:
+            continue
+        is_folder = False
+        try:
+            is_folder = bool(item.IsFolder)
+        except Exception:
+            is_folder = False
+        if is_folder:
+            if name.lower() in SKIP_DIR_NAMES or name.startswith("."):
+                continue
+            try:
+                child = item.GetFolder
+            except Exception:
+                continue
+            rel = f"{prefix}{name}/"
+            out.extend(_mtp_walk_media(child, rel, depth + 1))
+            continue
+        if Path(name).suffix.lower() not in MEDIA_EXTS:
+            continue
+        size = _mtp_item_size(item)
+        out.append({"path": f"{prefix}{name}", "name": name, "size": int(size or 0)})
+    return out
+
+
+def _mtp_delete_rel(music_folder, rel: str) -> bool:
+    import pythoncom
+
+    parts = [p for p in rel.replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    folder = music_folder
+    for part in parts[:-1]:
+        item = _child(folder, part)
+        if item is None:
+            return False
+        folder = item.GetFolder
+    name = parts[-1]
+    try:
+        item = folder.ParseName(name)
+    except Exception:
+        item = None
+    if item is None:
+        return False
+    try:
+        item.InvokeVerbEx("delete", "")
+    except Exception:
+        try:
+            item.InvokeVerb("delete")
+        except Exception:
+            return False
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        pythoncom.PumpWaitingMessages()
+        try:
+            if folder.ParseName(name) is None:
+                return True
+        except Exception:
+            return True
+        time.sleep(0.2)
+    try:
+        return folder.ParseName(name) is None
+    except Exception:
+        return True
+

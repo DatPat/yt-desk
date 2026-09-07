@@ -207,6 +207,23 @@ export type AndroidStatus = {
   job: UsbJob;
 };
 
+export type AndroidOrphan = {
+  path: string;
+  name: string;
+  size: number;
+};
+
+export type AndroidOrphans = {
+  status: "idle" | "scanning" | "deleting" | "done" | "error";
+  message: string;
+  error: string | null;
+  files: AndroidOrphan[];
+  deleted: number;
+  failed: number;
+  total: number;
+  device: string | null;
+};
+
 export type Stats = {
   playlists: number;
   videos: number;
