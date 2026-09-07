@@ -29,6 +29,21 @@ export function formatEta(seconds: number | null | undefined): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+export function formatWhen(iso: string | null | undefined): string {
+  if (!iso) return "never";
+  const start = Date.parse(iso);
+  if (Number.isNaN(start)) return iso;
+  const delta = Math.max(0, Date.now() - start);
+  const mins = Math.floor(delta / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 14) return `${days}d ago`;
+  return new Date(start).toLocaleString();
+}
+
 export function formatElapsed(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return "";
   const start = Date.parse(iso);

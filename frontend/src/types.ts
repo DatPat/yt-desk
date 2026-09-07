@@ -215,6 +215,44 @@ export type Stats = {
   active_downloads: number;
 };
 
+export type ChangeItem = {
+  id: string;
+  title: string;
+  channel: string;
+  duration: number | null;
+  thumbnail: string | null;
+  url: string;
+  download: Download | null;
+  playlist_id: string;
+  playlist_title: string;
+  song_artist?: string;
+  song_title?: string;
+};
+
+export type ChangesReport = {
+  status: "idle" | "running" | "done" | "error";
+  message: string;
+  error: string | null;
+  checked: number;
+  total: number;
+  added: number;
+  removed: number;
+  previous_at: string | null;
+  checked_at: string | null;
+  baseline: boolean;
+  playlists: {
+    id: string;
+    title: string;
+    error: string | null;
+    added: number;
+    removed: number;
+    added_items: ChangeItem[];
+    removed_items: ChangeItem[];
+  }[];
+  added_items: ChangeItem[];
+  removed_items: ChangeItem[];
+};
+
 export type CompareReport = {
   left: { id: string; title: string; count: number };
   right: { id: string; title: string; count: number };

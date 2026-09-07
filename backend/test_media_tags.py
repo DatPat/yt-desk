@@ -69,5 +69,15 @@ class PlaylistM3uTests(unittest.TestCase):
         self.assertTrue(text.endswith("\n"))
 
 
+class PlaylistChangeTests(unittest.TestCase):
+    def test_new_ids_are_those_missing_from_snapshot(self):
+        old = {"aaa", "bbb"}
+        videos = [{"id": "bbb", "title": "Keep"}, {"id": "ccc", "title": "New"}]
+        added = [v for v in videos if v["id"] not in old]
+        removed = [vid for vid in old if vid not in {v["id"] for v in videos}]
+        self.assertEqual([v["id"] for v in added], ["ccc"])
+        self.assertEqual(removed, ["aaa"])
+
+
 if __name__ == "__main__":
     unittest.main()

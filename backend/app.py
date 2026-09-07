@@ -303,6 +303,21 @@ def create_app() -> FastAPI:
             accepted.append(playlist)
         return {"playlists": accepted}
 
+    @application.get("/api/playlists/changes")
+    def playlist_changes() -> dict[str, Any]:
+        from . import changes
+
+        return changes.load_saved()
+
+    @application.post("/api/playlists/check-new")
+    def check_new_playlist_items() -> dict[str, Any]:
+        from . import changes
+
+        try:
+            return changes.start_check()
+        except Exception as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @application.post("/api/playlists/refresh-all")
     def refresh_all_playlists() -> dict[str, Any]:
         playlists = db.list_playlists()

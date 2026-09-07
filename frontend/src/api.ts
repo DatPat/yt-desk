@@ -15,6 +15,7 @@ import type {
   UsbStatus,
   UsbJob,
   AndroidStatus,
+  ChangesReport,
 } from "./types";
 
 async function readError(res: Response): Promise<string> {
@@ -61,6 +62,9 @@ export const api = {
     fetch(`/api/playlists/${encodeURIComponent(id)}/refresh`, { method: "POST" }).then((r) => json<Playlist>(r)),
   refreshAllPlaylists: () =>
     fetch("/api/playlists/refresh-all", { method: "POST" }).then((r) => json<{ ok: boolean; count: number }>(r)),
+  playlistChanges: () => fetch("/api/playlists/changes").then((r) => json<ChangesReport>(r)),
+  checkNewPlaylistItems: () =>
+    fetch("/api/playlists/check-new", { method: "POST" }).then((r) => json<ChangesReport>(r)),
   videos: (q = "") => fetch(`/api/videos?q=${encodeURIComponent(q)}`).then((r) => json<Video[]>(r)),
   duplicates: () => fetch("/api/duplicates").then((r) => json<DuplicateReport>(r)),
   comparePlaylists: (body: { left: string; right: string; mode: string }) =>

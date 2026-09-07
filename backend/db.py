@@ -97,6 +97,12 @@ class Database:
                     key TEXT PRIMARY KEY,
                     value TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS playlist_seen (
+                    playlist_id TEXT NOT NULL,
+                    video_id TEXT NOT NULL,
+                    PRIMARY KEY (playlist_id, video_id)
+                );
                 """
             )
             for key, value in DEFAULT_SETTINGS.items():
@@ -274,7 +280,37 @@ class Database:
     def delete_playlist(self, playlist_id: str) -> None:
         with self._lock, self.connect() as conn:
             conn.execute("DELETE FROM playlist_videos WHERE playlist_id = ?", (playlist_id,))
+            conn.execute("DELETE FROM playlist_seen WHERE playlist_id = ?", (playlist_id,))
             conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+
+    def playlist_video_ids(self, playlist_id: str) -> set[str]:
+        with self._lock, self.connect() as conn:
+            rows = conn.execute(
+                "SELECT video_id FROM playlist_videos WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchall()
+            return {row["video_id"] for row in rows}
+
+    def all_seen_ids(self) -> dict[str, set[str]]:
+        with self._lock, self.connect() as conn:
+            rows = conn.execute("SELECT playlist_id, video_id FROM playlist_seen").fetchall()
+            out: dict[str, set[str]] = {}
+            for row in rows:
+                out.setdefault(row["playlist_id"], set()).add(row["video_id"])
+            return out
+
+    def has_seen_snapshot(self) -> bool:
+        with self._lock, self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM playlist_seen LIMIT 1").fetchone()
+            return bool(row)
+
+    def replace_seen(self, playlist_id: str, video_ids: list[str]) -> None:
+        with self._lock, self.connect() as conn:
+            conn.execute("DELETE FROM playlist_seen WHERE playlist_id = ?", (playlist_id,))
+            conn.executemany(
+                "INSERT OR IGNORE INTO playlist_seen(playlist_id, video_id) VALUES (?, ?)",
+                [(playlist_id, vid) for vid in video_ids],
+            )
 
     def playlist_videos(self, playlist_id: str) -> list[dict[str, Any]]:
         with self._lock, self.connect() as conn:

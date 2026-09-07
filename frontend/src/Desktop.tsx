@@ -22,6 +22,7 @@ import {
   Search,
   Layers,
   Library,
+  Sparkles,
 } from "lucide-react";
 import { api, mediaUrl } from "./api";
 import {
@@ -30,18 +31,20 @@ import {
   formatDuration,
   formatElapsed,
   formatEta,
+  formatWhen,
   isAudioFile,
   isDownloaded,
   isDuplicate,
   isUnavailable,
   qualityLabel,
 } from "./format";
-import type { AndroidStatus, CompareReport, Download as Dl, DuplicateReport, Health, Playlist, Settings as AppSettings, SongGroup, Stats, SyncInfo, UsbJob, UsbStatus, Video, YoutubeJob, YoutubePreview, YoutubeStatus } from "./types";
+import type { AndroidStatus, ChangesReport, CompareReport, Download as Dl, DuplicateReport, Health, Playlist, Settings as AppSettings, SongGroup, Stats, SyncInfo, UsbJob, UsbStatus, Video, YoutubeJob, YoutubePreview, YoutubeStatus } from "./types";
 
 type View =
   | { kind: "library" }
   | { kind: "playlist"; id: string }
   | { kind: "duplicates" }
+  | { kind: "whatsnew" }
   | { kind: "compare" }
   | { kind: "downloads" }
   | { kind: "sync" }
@@ -55,6 +58,7 @@ export function Desktop() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
   const [duplicates, setDuplicates] = useState<DuplicateReport>({ across: [], within: [], songs: [] });
+  const [changes, setChanges] = useState<ChangesReport | null>(null);
   const [downloads, setDownloads] = useState<Dl[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
@@ -81,16 +85,18 @@ export function Desktop() {
   }, []);
 
   const refreshLists = useCallback(async () => {
-    const [pls, dls, st, hp] = await Promise.all([
+    const [pls, dls, st, hp, ch] = await Promise.all([
       api.playlists(),
       api.downloads(),
       api.stats(),
       api.health(),
+      api.playlistChanges().catch(() => null),
     ]);
     setPlaylists(pls);
     setDownloads(dls);
     setStats(st);
     setHealth(hp);
+    if (ch) setChanges(ch);
   }, []);
 
   const loadViewData = useCallback(async (next: View, q: string) => {
@@ -101,6 +107,8 @@ export function Desktop() {
       setVideos(pl.videos);
     } else if (next.kind === "duplicates") {
       setDuplicates(await api.duplicates());
+    } else if (next.kind === "whatsnew") {
+      setChanges(await api.playlistChanges());
     } else if (next.kind === "downloads") {
       setDownloads(await api.downloads());
     } else if (next.kind === "sync") {
@@ -174,6 +182,9 @@ export function Desktop() {
     es.addEventListener("youtube", () => {
       /* Merge page listens via its own poll + this refresh of playlists after import */
       api.playlists().then(setPlaylists).catch(() => undefined);
+    });
+    es.addEventListener("changes", (ev) => {
+      setChanges(JSON.parse((ev as MessageEvent).data));
     });
     return () => es.close();
   }, []);
@@ -285,6 +296,10 @@ export function Desktop() {
             <Layers /> Duplicates
             <span className="badge gold-badge">{stats?.duplicates ?? 0}</span>
           </button>
+          <button className={`nav-btn ${view.kind === "whatsnew" ? "active" : ""}`} onClick={() => go({ kind: "whatsnew" })}>
+            <Sparkles /> What’s new
+            {changes?.added ? <span className="badge gold-badge">{changes.added}</span> : null}
+          </button>
           <button className={`nav-btn ${view.kind === "compare" ? "active" : ""}`} onClick={() => go({ kind: "compare" })}>
             <ArrowLeftRight /> Compare lists
           </button>
@@ -365,21 +380,37 @@ export function Desktop() {
             onPlay={setPlayer}
             busy={busy}
             headerActions={
-              <button
-                className="btn"
-                disabled={playlists.some((p) => p.status === "fetching")}
-                onClick={async () => {
-                  try {
-                    const r = await api.refreshAllPlaylists();
-                    toast(`Refetching ${r.count} playlists from YouTube…`);
-                    await refreshLists();
-                  } catch (e) {
-                    toast(String((e as Error).message), true);
-                  }
-                }}
-              >
-                <RefreshCw size={15} className={playlists.some((p) => p.status === "fetching") ? "spin" : ""} /> Refetch from YouTube
-              </button>
+              <>
+                <button
+                  className="btn"
+                  disabled={changes?.status === "running"}
+                  onClick={async () => {
+                    try {
+                      setChanges(await api.checkNewPlaylistItems());
+                      go({ kind: "whatsnew" });
+                    } catch (e) {
+                      toast(String((e as Error).message), true);
+                    }
+                  }}
+                >
+                  <Sparkles size={15} /> Check for new songs
+                </button>
+                <button
+                  className="btn"
+                  disabled={playlists.some((p) => p.status === "fetching")}
+                  onClick={async () => {
+                    try {
+                      const r = await api.refreshAllPlaylists();
+                      toast(`Refetching ${r.count} playlists from YouTube…`);
+                      await refreshLists();
+                    } catch (e) {
+                      toast(String((e as Error).message), true);
+                    }
+                  }}
+                >
+                  <RefreshCw size={15} className={playlists.some((p) => p.status === "fetching") ? "spin" : ""} /> Refetch from YouTube
+                </button>
+              </>
             }
           />
         )}
@@ -423,6 +454,19 @@ export function Desktop() {
             playlists={playlists}
             onDownload={(ids) => queue(ids)}
             onPlay={setPlayer}
+            onToast={toast}
+          />
+        )}
+        {view.kind === "whatsnew" && (
+          <ChangesPage
+            report={changes}
+            busy={busy || changes?.status === "running"}
+            onCheck={async () => {
+              setChanges(await api.checkNewPlaylistItems());
+            }}
+            onDownload={(ids) => queue(ids)}
+            onPlay={(video) => setPlayer(video as Video)}
+            onOpenPlaylist={(id) => go({ kind: "playlist", id })}
             onToast={toast}
           />
         )}
@@ -931,6 +975,132 @@ function CompareColumn({
             ))}
       </div>
     </section>
+  );
+}
+
+function ChangesPage({
+  report,
+  busy,
+  onCheck,
+  onDownload,
+  onPlay,
+  onOpenPlaylist,
+  onToast,
+}: {
+  report: ChangesReport | null;
+  busy: boolean;
+  onCheck: () => Promise<void>;
+  onDownload: (ids: string[]) => void;
+  onPlay: (v: Video) => void;
+  onOpenPlaylist: (id: string) => void;
+  onToast: (msg: string, err?: boolean) => void;
+}) {
+  const running = report?.status === "running";
+  const added = report?.added_items || [];
+  const removed = report?.removed_items || [];
+  const groups = report?.playlists || [];
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h2>What’s new</h2>
+          <p>
+            {running
+              ? report?.message || "Checking YouTube…"
+              : report?.message || "Compare your playlists to YouTube and list songs added since the last check."}
+          </p>
+        </div>
+        <div className="page-actions">
+          {added.length > 0 && (
+            <button className="btn btn-primary" disabled={busy} onClick={() => onDownload(added.map((v) => v.id))}>
+              <Download size={15} /> Download {added.length} new
+            </button>
+          )}
+          <button
+            className="btn"
+            disabled={busy || running}
+            onClick={() => onCheck().catch((e) => onToast(String((e as Error).message), true))}
+          >
+            <Sparkles size={15} className={running ? "spin" : ""} /> Check YouTube
+          </button>
+        </div>
+      </div>
+      {running && (
+        <div className="dl-now">
+          <div className="dl-now-phase">{report?.message}</div>
+          {report && report.total > 0 && (
+            <div className="bar bar-lg">
+              <i style={{ width: `${Math.min(100, (report.checked / report.total) * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+      {report?.error && <p style={{ color: "var(--danger)" }}>{report.error}</p>}
+      {!running && report?.checked_at && (
+        <p style={{ color: "var(--faint)", marginTop: 0 }}>
+          Last check {formatWhen(report.checked_at)}
+          {report.previous_at ? ` · previous ${formatWhen(report.previous_at)}` : " · first baseline"}
+        </p>
+      )}
+      {!running && !report?.checked_at && report?.status === "idle" && (
+        <div className="empty">
+          <h3>No check yet</h3>
+          <p>This looks at YouTube and lists tracks that were not on your playlists last time you ran it.</p>
+        </div>
+      )}
+      {report?.baseline && !running && (
+        <div className="empty">
+          <h3>Baseline saved</h3>
+          <p>Current playlist contents are remembered. Run Check YouTube again after you add songs on YouTube.</p>
+        </div>
+      )}
+      {added.length > 0 && (
+        <>
+          <div className="section-kicker">Added since last check · {added.length}</div>
+          {groups.filter((g) => g.added > 0).map((g) => (
+            <div key={g.id} style={{ marginBottom: 18 }}>
+              <button className="chip" onClick={() => onOpenPlaylist(g.id)}>{g.title} · {g.added}</button>
+              <div className="dupe-grid" style={{ marginTop: 10 }}>
+                {g.added_items.map((v) => (
+                  <article key={`${g.id}-${v.id}`} className="dupe-card">
+                    <div className="thumb-wrap" style={{ width: 168, height: 94 }}>
+                      {v.thumbnail && <img src={v.thumbnail} alt="" />}
+                    </div>
+                    <div>
+                      <h3>{v.song_title || v.title}</h3>
+                      <div className="where">{v.song_artist || v.channel} · {formatDuration(v.duration)}</div>
+                      <div className="row-actions" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+                        {isDownloaded(v) ? (
+                          <button className="btn btn-sm" onClick={() => onPlay(v as Video)}><Play size={13} /> Play</button>
+                        ) : (
+                          <button className="btn btn-sm" onClick={() => onDownload([v.id])}><Download size={13} /> Download</button>
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+      {removed.length > 0 && !running && (
+        <>
+          <div className="section-kicker">No longer on YouTube · {removed.length}</div>
+          <div className="dl-list">
+            {removed.map((v) => (
+              <div key={`rm-${v.playlist_id}-${v.id}`} className="dl-queue-row">
+                <span />
+                <div>
+                  <b>{v.title}</b>
+                  <div style={{ color: "var(--faint)", fontSize: 12 }}>{v.playlist_title} · {v.channel}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
