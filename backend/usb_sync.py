@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -11,8 +12,18 @@ from .db import db
 from .events import hub
 
 
-REMOTE_DIR = "YT Desk"
+# VendDocuments only exposes the app's Documents folder, and only under this absolute path.
+DOCUMENTS = "/Documents"
+REMOTE_DIR = f"{DOCUMENTS}/YT Desk"
+PLAYLIST_DIR = f"{DOCUMENTS}/Playlists"
 USB_APPS = [
+    {
+        "id": "dash",
+        "bundle": "com.dash.auto",
+        "label": "DASH",
+        "hint": "Plays Opus. YT Desk playlists land in DASH → Playlists.",
+        "playlists": True,
+    },
     {"id": "vlc", "bundle": "org.videolan.vlc-ios", "label": "VLC", "hint": "Best for Opus. Open VLC after the copy."},
     {"id": "infuse", "bundle": "com.firecore.infuse", "label": "Infuse", "hint": "Opens copied files in Infuse."},
 ]
@@ -250,12 +261,19 @@ async def _async_sync(udid: str | None, spec: dict[str, str], files: list[Path])
                 except Exception as exc:
                     failed += 1
                     _set_job(failed=failed, message=f"Failed {path.name}: {_friendly_error(exc)}")
+            playlists = 0
+            if spec.get("playlists") and not _cancel.is_set():
+                _set_job(message="Writing playlists…")
+                playlists = await _push_playlists(afc)
+            summary = f"Done. Copied {copied}, skipped {skipped}, failed {failed}."
+            if spec.get("playlists"):
+                summary += f" {playlists} playlist(s) in {spec['label']} → Playlists."
             _set_job(
                 status="done",
                 copied=copied,
                 skipped=skipped,
                 failed=failed,
-                message=f"Done. Copied {copied}, skipped {skipped}, failed {failed}. Open {spec['label']} on the iPhone.",
+                message=f"{summary} Open {spec['label']} on the iPhone.",
             )
     except Exception as exc:
         raise RuntimeError(_friendly_error(exc, spec["label"])) from exc
@@ -264,6 +282,32 @@ async def _async_sync(udid: str | None, spec: dict[str, str], files: list[Path])
             await lockdown.close()
         except Exception:
             pass
+
+
+async def _push_playlists(afc) -> int:
+    """Write one .m3u8 per YT Desk playlist into the app's watched Playlists folder.
+
+    Entries point at ../<file name>; DASH resolves them by file name, so the tracks
+    under YT Desk/ match. Always overwritten, since playlists change as they grow.
+    """
+    from .android_usb import _build_playlist_files
+
+    with tempfile.TemporaryDirectory(prefix="ytdesk-pl-") as stage:
+        files = _build_playlist_files(Path(stage))
+        if not files:
+            return 0
+        if not await afc.exists(PLAYLIST_DIR):
+            await afc.makedirs(PLAYLIST_DIR)
+        pushed = 0
+        for path in files:
+            if _cancel.is_set():
+                break
+            try:
+                await afc.push(str(path), f"{PLAYLIST_DIR}/{path.name}", progress_bar=False)
+                pushed += 1
+            except Exception as exc:
+                _set_job(message=f"Failed playlist {path.name}: {_friendly_error(exc)}")
+        return pushed
 
 
 def _friendly_error(exc: BaseException, app_label: str | None = None) -> str:
@@ -275,7 +319,7 @@ def _friendly_error(exc: BaseException, app_label: str | None = None) -> str:
         return "Unlock the iPhone (enter the passcode) and try again."
     if "appnotinstalled" in lowered or "not installed" in lowered:
         label = app_label or "VLC"
-        return f"{label} is not installed on this iPhone, or File Sharing is off. Install VLC from the App Store."
+        return f"{label} is not installed on this iPhone, or File Sharing is off. Install {label} first."
     if "nodevice" in lowered or "no device" in lowered:
         return "No iPhone on USB. Plug it in with a data cable (not charge-only)."
     if "userdenied" in lowered:

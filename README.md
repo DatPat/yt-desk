@@ -84,7 +84,10 @@ macOS has no built-in MTP, so the Mac uses adb. Install it with `brew install --
 
 ### iPhone over USB (Mac)
 
-On a Mac, plug the iPhone in with a data cable, unlock it, tap **Trust This Computer**, install **VLC** on the phone, then click **Copy library to iPhone**. Files land in VLC → Files as `YT Desk/`. Already-copied names are skipped. Opus plays in VLC, not in Apple Music.
+On a Mac, plug the iPhone in with a data cable, unlock it, tap **Trust This Computer**, then pick the app to copy into and click **Copy library to iPhone**. Files land in the app's Files folder as `YT Desk/`. Already-copied names are skipped. Opus plays in DASH and VLC, not in Apple Music.
+
+- **DASH** (`com.dash.auto`): tracks show up under Device, and each YT Desk playlist is written to DASH → Playlists as a `.m3u8`, so it appears in the Playlists tab and in CarPlay.
+- **VLC** / **Infuse**: tracks only.
 
 ### Wi‑Fi
 

@@ -1772,6 +1772,7 @@ function PhoneExtras({
 function UsbPanel() {
   const [usb, setUsb] = useState<UsbStatus | null>(null);
   const [appId, setAppId] = useState("vlc");
+  const [appPicked, setAppPicked] = useState(false);
   const [job, setJob] = useState<UsbJob | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -1797,13 +1798,21 @@ function UsbPanel() {
 
   const device = usb?.devices[0];
   const running = job?.status === "running";
+  const installed = device?.apps.join(",") || "";
+  const appLabel = usb?.apps.find((a) => a.id === appId)?.label || appId;
+
+  useEffect(() => {
+    // Default to the first supported app that is on the phone (DASH, then VLC, then Infuse).
+    if (!appPicked && installed) setAppId(installed.split(",")[0]);
+  }, [installed, appPicked]);
 
   return (
     <div className="step">
       <b>1. USB copy (Mac → iPhone)</b>
       <p>
         Plug the iPhone into this Mac with a data cable, unlock it, tap <b>Trust This Computer</b>.
-        Tracks copy into VLC’s Files folder. Already-copied names are skipped.
+        Tracks copy into the chosen app’s Files folder under <b>YT Desk</b>. Already-copied names are skipped.
+        For <b>DASH</b>, each YT Desk playlist is also written to DASH → Playlists.
       </p>
       {!usb?.library && (
         <p style={{ color: "var(--gold)" }}>
@@ -1823,7 +1832,7 @@ function UsbPanel() {
         <button className="btn btn-sm" onClick={refresh}><RefreshCw size={13} /> Refresh</button>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
-        <select value={appId} onChange={(e) => setAppId(e.target.value)}>
+        <select value={appId} onChange={(e) => { setAppId(e.target.value); setAppPicked(true); }}>
           {(usb?.apps || [{ id: "vlc", label: "VLC" }]).map((a) => (
             <option key={a.id} value={a.id}>{a.label}</option>
           ))}
@@ -1857,8 +1866,8 @@ function UsbPanel() {
           <button className="btn btn-danger" onClick={() => api.usbCancel()}>Cancel</button>
         )}
       </div>
-      {device && usb && appId === "vlc" && device.apps.length > 0 && !device.apps.includes("vlc") && (
-        <p style={{ color: "var(--gold)" }}>VLC is not on this iPhone. Install it from the App Store first.</p>
+      {device?.paired && !device.apps.includes(appId) && (
+        <p style={{ color: "var(--gold)" }}>{appLabel} is not on this iPhone. Install it first.</p>
       )}
       {job && job.status !== "idle" && (
         <div style={{ marginTop: 12 }}>
