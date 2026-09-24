@@ -731,6 +731,21 @@ def _refresh_all_playlists(playlists: list[dict]) -> None:
 
 
 def _pick_folder() -> str:
+    if sys.platform == "darwin":
+        # Tk must own the main thread on macOS; this runs on a server worker thread.
+        script = (
+            'try\n'
+            'POSIX path of (choose folder with prompt "YT Desk library folder")\n'
+            'on error number -128\n'
+            'return ""\n'
+            'end try'
+        )
+        try:
+            proc = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=600)
+        except Exception:
+            return ""
+        chosen = proc.stdout.strip()
+        return chosen.rstrip("/") if len(chosen) > 1 else chosen
     try:
         import tkinter as tk
         from tkinter import filedialog

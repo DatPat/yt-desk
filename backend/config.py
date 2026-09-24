@@ -3,12 +3,26 @@ from __future__ import annotations
 import os
 import secrets
 import socket
+import sys
 from pathlib import Path
 
 
 APP_NAME = "YT Desk"
 PORT = int(os.environ.get("YTDESK_PORT", "8765"))
 HOST = os.environ.get("YTDESK_HOST", "0.0.0.0")
+
+
+def _extend_tool_path() -> None:
+    """Apps started from Finder or the Dock get a bare PATH without Homebrew."""
+    if sys.platform != "darwin":
+        return
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    extra = [d for d in ("/opt/homebrew/bin", "/usr/local/bin") if d not in parts and os.path.isdir(d)]
+    if extra:
+        os.environ["PATH"] = os.pathsep.join([p for p in parts if p] + extra)
+
+
+_extend_tool_path()
 
 
 def app_data_dir() -> Path:
@@ -18,6 +32,8 @@ def app_data_dir() -> Path:
     elif os.name == "nt":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
         path = base / "YTDesk"
+    elif sys.platform == "darwin" and not (Path.home() / ".ytdesk").exists():
+        path = Path.home() / "Library" / "Application Support" / "YTDesk"
     else:
         path = Path.home() / ".ytdesk"
     path.mkdir(parents=True, exist_ok=True)
@@ -25,7 +41,8 @@ def app_data_dir() -> Path:
 
 
 def default_library_dir() -> Path:
-    videos = Path.home() / "Videos" / "YT Desk"
+    folder = "Movies" if sys.platform == "darwin" else "Videos"
+    videos = Path.home() / folder / "YT Desk"
     try:
         videos.mkdir(parents=True, exist_ok=True)
         return videos

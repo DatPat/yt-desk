@@ -465,7 +465,7 @@ export function Desktop() {
               setChanges(await api.checkNewPlaylistItems());
             }}
             onDownload={(ids) => queue(ids)}
-            onPlay={(video) => setPlayer(video as Video)}
+            onPlay={setPlayer}
             onOpenPlaylist={(id) => go({ kind: "playlist", id })}
             onToast={toast}
           />
@@ -505,6 +505,7 @@ export function Desktop() {
           <SyncPage
             sync={sync}
             defaultTab={health?.is_mac ? "ios" : "android"}
+            isMac={!!health?.is_mac}
             onRotate={async () => setSync(await api.rotateSync())}
             onCopy={(text) => {
               navigator.clipboard.writeText(text);
@@ -1071,7 +1072,7 @@ function ChangesPage({
                       <div className="where">{v.song_artist || v.channel} · {formatDuration(v.duration)}</div>
                       <div className="row-actions" style={{ justifyContent: "flex-start", marginTop: 8 }}>
                         {isDownloaded(v) ? (
-                          <button className="btn btn-sm" onClick={() => onPlay(v as Video)}><Play size={13} /> Play</button>
+                          <button className="btn btn-sm" onClick={() => onPlay({ ...v, upload_date: null, availability: null })}><Play size={13} /> Play</button>
                         ) : (
                           <button className="btn btn-sm" onClick={() => onDownload([v.id])}><Download size={13} /> Download</button>
                         )}
@@ -1371,11 +1372,13 @@ function DownloadsPage({
 function SyncPage({
   sync,
   defaultTab = "android",
+  isMac = false,
   onRotate,
   onCopy,
 }: {
   sync: SyncInfo;
   defaultTab?: "ios" | "android";
+  isMac?: boolean;
   onRotate: () => void;
   onCopy: (t: string) => void;
 }) {
@@ -1447,7 +1450,7 @@ function SyncPage({
             </div>
             <div className="step">
               <b>Library folder on this PC</b>
-              <p>{sync.library_dir} — you can also copy this folder onto the phone yourself in Explorer.</p>
+              <p>{sync.library_dir} — you can also copy this folder onto the phone yourself in {isMac ? "Finder" : "Explorer"}.</p>
             </div>
           </div>
         </div>
@@ -1499,8 +1502,10 @@ function AndroidUsbPanel() {
   }, [job?.status]);
 
   const device = info?.devices.find((d) => d.id === selectedId) || info?.devices.find((d) => d.ready) || info?.devices[0];
+  const isWindows = info?.is_windows ?? true;
+  const sep = isWindows ? "\\" : " › ";
   const destPath = device
-    ? `This PC\\${device.name}\\Internal shared storage\\Music`
+    ? (isWindows ? `This PC\\${device.name}\\Internal shared storage\\Music` : `${device.name} › Internal storage › Music`)
     : (info?.dest || "This PC\\phone\\Internal shared storage\\Music");
   const running = job?.status === "running";
   const count = info?.library_count ?? 0;
@@ -1512,9 +1517,20 @@ function AndroidUsbPanel() {
     <div className="step">
       <b>1. USB copy onto the phone</b>
       <p>
-        Plug in <b>any Android phone</b> with a data cable, unlock it, and set USB to <b>File transfer / MTP</b>
-        (not Charge only). Tracks copy into <b>{destPath}</b>. Each YT Desk playlist is written to{" "}
-        <b>{destPath}\Playlists</b> as a <b>.m3u8</b> file. Names already there are skipped.
+        {isWindows ? (
+          <>
+            Plug in <b>any Android phone</b> with a data cable, unlock it, and set USB to <b>File transfer / MTP</b>
+            (not Charge only).
+          </>
+        ) : (
+          <>
+            Install adb (<code>brew install --cask android-platform-tools</code>), turn on{" "}
+            <b>Developer options → USB debugging</b> on the phone, plug it in with a data cable, and accept the{" "}
+            <b>Allow USB debugging</b> prompt.
+          </>
+        )}{" "}
+        Tracks copy into <b>{destPath}</b>. Each YT Desk playlist is written to{" "}
+        <b>{destPath}{sep}Playlists</b> as a <b>.m3u8</b> file. Names already there are skipped.
         Open the playlists in VLC.
       </p>
       {loadError && (
@@ -1538,7 +1554,9 @@ function AndroidUsbPanel() {
           <div className="phone-card-meta">
             {device
               ? `${device.kind === "adb" ? "USB debugging" : "File transfer"} · ${count} tracks will copy into ${destPath}`
-              : "Unlock the phone, set USB to File transfer / MTP, then Refresh. Use the Android tab, not iPhone / iPad."}
+              : isWindows
+                ? "Unlock the phone, set USB to File transfer / MTP, then Refresh. Use the Android tab, not iPhone / iPad."
+                : "Unlock the phone with USB debugging on, then Refresh. Use the Android tab, not iPhone / iPad."}
           </div>
         </div>
         <button className="btn btn-sm" onClick={refresh}><RefreshCw size={13} /> Refresh</button>

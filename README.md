@@ -27,6 +27,17 @@ Already expected on this machine:
 
 ## Run
 
+### macOS
+
+```bash
+brew install python ffmpeg node   # once
+./start.sh
+```
+
+`start.sh` picks Python 3.13 → 3.11 if installed, creates `.venv`, installs deps, builds the UI if needed, and opens a native window. For Android USB copy on a Mac, also run `brew install --cask android-platform-tools`.
+
+### Windows
+
 From `D:\yt-desk` in PowerShell:
 
 ```powershell
@@ -67,6 +78,10 @@ Plug the phone in with a data cable, unlock it, and set USB to **File transfer /
 
 If USB debugging is on, the same button uses `adb push` instead.
 
+### Android over USB (Mac)
+
+macOS has no built-in MTP, so the Mac uses adb. Install it with `brew install --cask android-platform-tools`, turn on **Developer options → USB debugging** on the phone, plug it in, and accept the **Allow USB debugging** prompt. Then **Phone sync → Android → Copy library onto this phone**. Files land in `Internal storage/Music`, playlists in `Music/Playlists`.
+
 ### iPhone over USB (Mac)
 
 On a Mac, plug the iPhone in with a data cable, unlock it, tap **Trust This Computer**, install **VLC** on the phone, then click **Copy library to iPhone**. Files land in VLC → Files as `YT Desk/`. Already-copied names are skipped. Opus plays in VLC, not in Apple Music.
@@ -92,11 +107,11 @@ VLC: open the M3U URL from the sync page.
 
 Quota: each video added costs 50 units (default daily cap 10,000). Preview shows the estimate before anything is written.
 
-Windows Firewall may ask to allow Python on private networks the first time — allow it, or phones will not connect.
+Windows Firewall may ask to allow Python on private networks the first time — allow it, or phones will not connect. On macOS, allow incoming connections for Python when asked (System Settings → Network → Firewall if you dismissed it). macOS may also ask to allow YT Desk to find devices on the local network — allow that too.
 
 ## Library location
 
-Defaults to `Videos\YT Desk` (Windows). Database and PIN live in `%LOCALAPPDATA%\YTDesk`.
+Defaults to `Videos\YT Desk` on Windows and `~/Movies/YT Desk` on macOS. Database and PIN live in `%LOCALAPPDATA%\YTDesk` on Windows and `~/Library/Application Support/YTDesk` on macOS (`~/.ytdesk` on Linux).
 
 Private / members playlists: export a Netscape `cookies.txt` and set its path in Settings.
 

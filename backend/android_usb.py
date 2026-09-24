@@ -83,6 +83,8 @@ _job: dict[str, Any] = {
 
 def _dest_label(phone_name: str | None = None) -> str:
     name = (phone_name or "").strip() or "Android phone"
+    if sys.platform != "win32":
+        return f"{name} › Internal storage › Music"
     return f"This PC\\{name}\\Internal shared storage\\Music"
 
 
@@ -200,15 +202,26 @@ def _adb_path() -> str | None:
     found = shutil.which("adb")
     if found:
         return found
+    exe = "adb.exe" if os.name == "nt" else "adb"
     local = Path(os.environ.get("LOCALAPPDATA", ""))
     extra = [
-        local / "Android" / "Sdk" / "platform-tools" / "adb.exe",
-        Path(os.environ.get("ANDROID_HOME", "") or "") / "platform-tools" / "adb.exe",
-        Path(os.environ.get("ANDROID_SDK_ROOT", "") or "") / "platform-tools" / "adb.exe",
+        Path(os.environ[var]) / "platform-tools" / exe
+        for var in ("ANDROID_HOME", "ANDROID_SDK_ROOT")
+        if os.environ.get(var)
     ]
+    if os.name == "nt":
+        extra.append(local / "Android" / "Sdk" / "platform-tools" / exe)
+    elif sys.platform == "darwin":
+        extra += [
+            Path.home() / "Library" / "Android" / "sdk" / "platform-tools" / exe,
+            Path("/opt/homebrew/bin") / exe,
+            Path("/usr/local/bin") / exe,
+        ]
     for path in extra:
         if path.is_file():
             return str(path)
+    if os.name != "nt":
+        return None
     winget = local / "Microsoft" / "WinGet" / "Packages"
     if winget.is_dir():
         matches = sorted(winget.glob("Google.PlatformTools*/platform-tools/adb.exe"))
@@ -579,8 +592,18 @@ def list_devices() -> dict[str, Any]:
                     "No Android phone on USB. Plug any Android in with a data cable, unlock it, "
                     "set USB to File transfer / MTP, then Refresh."
                 )
+        elif not _adb_path():
+            error = (
+                "USB copy on this Mac needs adb (brew install --cask android-platform-tools). "
+                "Then turn on USB debugging on the phone and click Refresh."
+                if sys.platform == "darwin"
+                else "USB copy on this OS needs adb (Android platform-tools) on PATH."
+            )
         else:
-            error = "USB copy on this OS uses adb. Plug the phone in with USB debugging on."
+            error = (
+                "No Android phone found by adb. Turn on Developer options → USB debugging, plug the phone in, "
+                "accept the 'Allow USB debugging' prompt, then Refresh."
+            )
     files = _local_files()
     return {
         "platform": sys.platform,

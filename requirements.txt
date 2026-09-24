@@ -10,5 +10,5 @@ mutagen>=1.47.0
 google-api-python-client>=2.160.0
 google-auth-oauthlib>=1.2.1
 google-auth>=2.38.0
-pymobiledevice3>=4.0.0
+pymobiledevice3>=11.0.0
 pywin32>=306; sys_platform == "win32"
