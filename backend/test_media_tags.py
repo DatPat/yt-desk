@@ -30,6 +30,30 @@ class FilenameTests(unittest.TestCase):
 
 
 class SkipExistingTests(unittest.TestCase):
+    def test_run_adb_decodes_utf8_filenames(self):
+        import subprocess
+        from unittest.mock import patch
+
+        from backend.android_usb import _run_adb
+
+        blob = "Ácido.opus\n".encode("utf-8")
+        self.assertIn(b"\x81", blob)
+        with self.assertRaises(UnicodeDecodeError):
+            blob.decode("cp1252")
+
+        def fake_run(cmd, **kwargs):
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            self.assertEqual(kwargs.get("errors"), "replace")
+            text = blob.decode(kwargs["encoding"], kwargs["errors"])
+            return subprocess.CompletedProcess(cmd, 0, stdout=text, stderr="")
+
+        with (
+            patch("backend.android_usb._adb_path", return_value="adb"),
+            patch("backend.android_usb.subprocess.run", side_effect=fake_run),
+        ):
+            proc = _run_adb(["shell", "ls", "/sdcard/Music"])
+        self.assertIn("Ácido.opus", proc.stdout)
+
     def test_parse_ls_keeps_spaces_in_names(self):
         from backend.android_usb import _parse_adb_ls, _should_skip_existing
 

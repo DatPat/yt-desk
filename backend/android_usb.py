@@ -224,10 +224,15 @@ def _run_adb(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[
     flags = 0
     if os.name == "nt":
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # Phone filenames arrive as raw UTF-8. text=True alone uses the Windows
+    # locale (cp1252), and bytes such as 0x81 kill the reader thread. The
+    # listing then comes back empty and every track looks missing.
     return subprocess.run(
         [adb, *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         creationflags=flags,
     )
